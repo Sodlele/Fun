@@ -1,0 +1,27 @@
+{
+  "name": "anime-companion",
+  "version": "0.1.0",
+  "description": "Claude-chan, an animated anime companion pane that acts out everything Claude does (thinking, reading, editing, shell, agents) with a visual-novel log and combo HUD",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of Claude-chan's lines (ru or en)",
+      "default": "ru",
+      "options": [
+        "ru",
+        "en"
+      ]
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open on start",
+      "description": "Open the Claude-chan pane when the session starts (where the layout docks a pane beside the transcript)",
+      "default": true
+    }
+  },
+  "author": {
+    "name": "sodlele"
+  }
+}

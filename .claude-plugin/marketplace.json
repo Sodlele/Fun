@@ -1,0 +1,14 @@
+{
+  "name": "sodlele-fun",
+  "owner": {
+    "name": "sodlele"
+  },
+  "description": "Fun mods for Claude Code",
+  "plugins": [
+    {
+      "name": "anime-companion",
+      "source": "./plugins/anime-companion",
+      "description": "Claude-chan: an animated anime companion pane that acts out everything Claude does"
+    }
+  ]
+}
