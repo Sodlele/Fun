@@ -1,6 +1,6 @@
 {
   "name": "anime-companion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claude-chan, an animated anime companion pane that acts out everything Claude does (thinking, reading, editing, shell, agents) with a visual-novel log and combo HUD",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -18,6 +18,12 @@
       "type": "boolean",
       "title": "Open on start",
       "description": "Open the Claude-chan pane when the session starts (where the layout docks a pane beside the transcript)",
+      "default": true
+    },
+    "chatLines": {
+      "type": "boolean",
+      "title": "Lines in the chat",
+      "description": "Show Claude-chan's line with a kaomoji above every tool call in the conversation (visible on every client, the phone included)",
       "default": true
     }
   },

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, EngineInterface, Register } from 'claude-code'
+import type { Elements, EngineInterface, Register, RenderElement, UiOpenResult } from 'claude-code'
 
 import type { LogEntry, Mood, Stage, Stats } from '../types'
 import { classify, ICONS, lineFor, UI } from './lines'
@@ -43,6 +43,7 @@ const stageAtom = atom({ plugin: 'anime-companion', key: 'stage' } as const, {
 const logAtom = atom({ plugin: 'anime-companion', key: 'log' } as const, [])
 const statsAtom = atom({ plugin: 'anime-companion', key: 'stats' } as const, ZERO)
 const dismissedAtom = atom({ plugin: 'anime-companion', key: 'dismissed' } as const, false)
+const inlineSeqAtom = atom({ plugin: 'anime-companion', key: 'inlineSeq' } as const, 0)
 
 const FACES: Record<Mood, string> = {
   idle: '(◕‿◕✿)',
@@ -88,6 +89,7 @@ const live = {
   rasterColumns: 0, // the mounted Raster's width; 0 while none is
   clock: 0,
   isTicking: false,
+  drawnOn: new Set<string>(), // the surfaces that drew the pane since the load
 }
 
 function text(key: string): string {
@@ -113,6 +115,13 @@ function level(tools: number): { lv: number; progress: number } {
 
 function compact(n: number): string {
   return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+/** A stable small number from a string: the same row says the same line. */
+function hash(words: string): number {
+  let n = 0
+  for (let i = 0; i < words.length; i++) n = (n * 31 + words.charCodeAt(i)) | 0
+  return Math.abs(n)
 }
 
 function statusLine(): string {
@@ -178,13 +187,8 @@ async function tick($: EngineInterface): Promise<void> {
   }
 }
 
-async function openPane($: EngineInterface): Promise<boolean> {
-  const opened = await $.ui.open({ id: PANE, title: text('title'), columns: 52, rows: 30 })
-  return opened.isPlaced
-}
-
-async function isPaneShown($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE && pane.isShown)
+async function openPane($: EngineInterface): Promise<UiOpenResult> {
+  return await $.ui.open({ id: PANE, title: text('title'), columns: 52, rows: 30 })
 }
 
 async function isPaneOpen($: EngineInterface): Promise<boolean> {
@@ -197,7 +201,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'claude-chan',
-      description: live.lang === 'ru' ? 'Показать или спрятать аниме-панель Claude-chan' : 'Show or hide the Claude-chan anime pane',
+      description: live.lang === 'ru' ? 'Позвать Claude-chan в чат и в панель (close: спрятать панель)' : 'Call Claude-chan into the chat and the pane (close: hide the pane)',
       argumentHint: '[close]',
       immediate: true,
     })
@@ -219,15 +223,23 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // `/claude-chan` draws her live in the chat (every client draws that row,
+  // the phone included) and opens the pane where the client seats panes.
   on('command.run', { command: 'claude-chan' }, async ($, e) => {
-    const ask = e.args.trim()
-    if (ask === 'close' || (ask === '' && (await isPaneShown($)))) {
+    if (e.args.trim() === 'close') {
       await $.ui.close({ id: PANE })
       return { text: text('hidden') }
     }
     await update($, dismissedAtom, () => false)
-    await openPane($)
-    return { text: text('opened') }
+    const opened = await openPane($)
+    const seq = await update($, inlineSeqAtom, n => n + 1)
+    const surfaces = await $.session.surfaces()
+    const report = [
+      `${text('clients')}: ${surfaces.length > 0 ? surfaces.join(', ') : text('noClients')}`,
+      `${text('pane')}: ${opened.isPlaced ? text('placed') : `${text('waiting')} (${opened.reason})`}`,
+      `${text('drawnOn')}: ${live.drawnOn.size > 0 ? [...live.drawnOn].join(', ') : text('nowhere')}`,
+    ].join(' · ')
+    return { text: `✿ ${text('here')} #${seq}\n\n${report}` }
   })
 
   on('ui.close', async ($, e, next) => {
@@ -342,67 +354,23 @@ export const register: Register = (on, options) => {
     const stats = await read($, statsAtom)
     const log = await read($, logAtom)
     const columns = Math.max(20, Math.min(512, e.props.bodyColumns))
-    const accent = ACCENT[stage.mood]
     const { Box, Text } = $.ui.resolve(e)
+    live.drawnOn.add(e.surface)
 
-    let picture
+    let art: RenderElement
     if (e.surface === 'terminal') {
-      const { Raster } = $.ui.resolve(e) as Elements['terminal']
       live.rasterColumns = columns
-      const px = scene({ w: columns, h: SCENE_ROWS * 2, mood: stage.mood, t: live.clock, combo: stats.combo })
-      picture = <Raster key={RASTER} columns={columns} rows={SCENE_ROWS} cells={rasterCells(px, columns, SCENE_ROWS)} />
+      art = rasterArt(($.ui.resolve(e) as Elements['terminal']).Raster, RASTER, columns, stage, stats)
     } else {
-      const { Svg } = $.ui.resolve(e) as Elements['desktop']
-      picture = (
-        <Svg
-          source={svgScene({ w: SVG_W, h: SCENE_ROWS * 2, mood: stage.mood, combo: stats.combo })}
-          alt={`Claude-chan: ${stage.line}`}
-          width={Math.min(520, Math.max(200, columns * 8))}
-          isInteractive
-        />
-      )
+      art = svgArt(($.ui.resolve(e) as Elements['desktop']).Svg, columns, stage, stats)
     }
-
-    const { lv, progress } = level(stats.tools)
-    const comboLine =
-      stats.combo > 0
-        ? `⚡ ${stats.combo} ${text('combo')}${stats.combo >= 10 ? '!!' : '!'} ${bar(Math.min(1, stats.combo / 25), 10)}`
-        : `⚡ 0 ${text('combo')}`
-    const counters = [
-      `📖 ${stats.reads}`,
-      `✨ ${stats.edits}`,
-      `⌨ ${stats.shells}`,
-      `🔍 ${stats.searches}`,
-      `👯 ${stats.agents}`,
-      `💥 ${stats.errors}`,
-      `💭 ${compact(stats.thought)}`,
-    ].join('  ')
     const room = Math.max(3, e.props.scroll.bodyRows - SCENE_ROWS - 10)
 
     return (
       <Box flexDirection="column">
-        {picture}
-        <Box flexDirection="column" borderStyle="round" borderColor={accent} paddingX={1}>
-          <Text bold color={accent} wrap="truncate-end">
-            {`${text('name')} ${FACES[stage.mood]}`}
-          </Text>
-          <Text>{stage.line}</Text>
-        </Box>
+        {stageTree({ Box, Text }, art, stage, stats)}
         <Box flexDirection="column" paddingX={1}>
-          <Text wrap="truncate-end">
-            <Text bold color="#ffd96a">{comboLine}</Text>
-            <Text dimColor>{`  ${text('best')} ${stats.bestCombo}`}</Text>
-          </Text>
-          <Text wrap="truncate-end">
-            <Text color="#d97757">{`${text('lv')} ${lv} ${bar(progress, 8)}`}</Text>
-            <Text dimColor>{`  ${stats.turns} ${text('turns')} · ${stats.tools} ${text('tools')} · ${compact(stats.tokens)} tok`}</Text>
-          </Text>
-          <Text dimColor wrap="truncate-end">
-            {counters}
-          </Text>
-        </Box>
-        <Box flexDirection="column" paddingX={1}>
-          <Text bold color={accent}>
+          <Text bold color={ACCENT[stage.mood]}>
             {text('log')}
           </Text>
           {log.length === 0 && <Text dimColor>{text('empty')}</Text>}
@@ -411,9 +379,114 @@ export const register: Register = (on, options) => {
       </Box>
     )
   })
+
+  // The latest /claude-chan row in the chat: the live scene, on every client.
+  on('ui.render', { component: 'CommandOutput', props: { command: 'claude-chan' } }, async ($, e, next) => {
+    const seq = Number(/#(\d+)/.exec(e.props.text)?.[1])
+    if (!Number.isFinite(seq) || seq !== (await read($, inlineSeqAtom))) return next(e)
+    const stage = await read($, stageAtom)
+    const stats = await read($, statsAtom)
+    const columns = Math.max(24, Math.min(64, (e.viewport?.columns ?? 48) - 2))
+    const { Box, Text } = $.ui.resolve(e)
+    const art =
+      e.surface === 'terminal'
+        ? rasterArt(($.ui.resolve(e) as Elements['terminal']).Raster, `inline-${seq}`, columns, stage, stats)
+        : svgArt(($.ui.resolve(e) as Elements['desktop']).Svg, columns, stage, stats)
+    const report = e.props.text.split('\n\n')[1] ?? ''
+
+    return (
+      <Box flexDirection="column">
+        {stageTree({ Box, Text }, art, stage, stats)}
+        <Text dimColor wrap="wrap">
+          {report}
+        </Text>
+      </Box>
+    )
+  })
+
+  // Her line above every tool call in the chat, from the row's own call.
+  if (options['chatLines'] !== false) {
+    on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+      const row = await next(e)
+      const input = typeof e.props.input === 'object' && e.props.input !== null ? (e.props.input as Readonly<Record<string, unknown>>) : {}
+      const { mood, detail } = classify(e.props.tool, input)
+      const shown: Mood = e.props.isErrored ? 'error' : mood
+      const { Box, Text } = $.ui.resolve(e)
+
+      return (
+        <Box flexDirection="column">
+          <Text color={ACCENT[shown]} wrap="truncate-end">
+            {`${FACES[shown]} ${lineFor(live.lang, shown, detail, hash(e.props.tool_use_id))}`}
+          </Text>
+          {row}
+        </Box>
+      )
+    })
+  }
 }
 
 type TextTag = Elements['terminal']['Text']
+type Tags = { Box: Elements['terminal']['Box']; Text: TextTag }
+
+function rasterArt(Raster: Elements['terminal']['Raster'], key: string, columns: number, stage: Stage, stats: Stats): RenderElement {
+  const px = scene({ w: columns, h: SCENE_ROWS * 2, mood: stage.mood, t: live.clock, combo: stats.combo })
+  return <Raster key={key} columns={columns} rows={SCENE_ROWS} cells={rasterCells(px, columns, SCENE_ROWS)} />
+}
+
+function svgArt(Svg: Elements['desktop']['Svg'], columns: number, stage: Stage, stats: Stats): RenderElement {
+  return (
+    <Svg
+      source={svgScene({ w: SVG_W, h: SCENE_ROWS * 2, mood: stage.mood, combo: stats.combo })}
+      alt={`Claude-chan: ${stage.line}`}
+      width={Math.min(520, Math.max(200, columns * 8))}
+      isInteractive
+    />
+  )
+}
+
+/** The picture, her dialogue box and the HUD: the pane's top and the chat row. */
+function stageTree({ Box, Text }: Tags, art: RenderElement, stage: Stage, stats: Stats): RenderElement {
+  const accent = ACCENT[stage.mood]
+  const { lv, progress } = level(stats.tools)
+  const comboLine =
+    stats.combo > 0
+      ? `⚡ ${stats.combo} ${text('combo')}${stats.combo >= 10 ? '!!' : '!'} ${bar(Math.min(1, stats.combo / 25), 10)}`
+      : `⚡ 0 ${text('combo')}`
+  const counters = [
+    `📖 ${stats.reads}`,
+    `✨ ${stats.edits}`,
+    `⌨ ${stats.shells}`,
+    `🔍 ${stats.searches}`,
+    `👯 ${stats.agents}`,
+    `💥 ${stats.errors}`,
+    `💭 ${compact(stats.thought)}`,
+  ].join('  ')
+
+  return (
+    <Box flexDirection="column">
+      {art}
+      <Box flexDirection="column" borderStyle="round" borderColor={accent} paddingX={1}>
+        <Text bold color={accent} wrap="truncate-end">
+          {`${text('name')} ${FACES[stage.mood]}`}
+        </Text>
+        <Text>{stage.line}</Text>
+      </Box>
+      <Box flexDirection="column" paddingX={1}>
+        <Text wrap="truncate-end">
+          <Text bold color="#ffd96a">{comboLine}</Text>
+          <Text dimColor>{`  ${text('best')} ${stats.bestCombo}`}</Text>
+        </Text>
+        <Text wrap="truncate-end">
+          <Text color="#d97757">{`${text('lv')} ${lv} ${bar(progress, 8)}`}</Text>
+          <Text dimColor>{`  ${stats.turns} ${text('turns')} · ${stats.tools} ${text('tools')} · ${compact(stats.tokens)} tok`}</Text>
+        </Text>
+        <Text dimColor wrap="truncate-end">
+          {counters}
+        </Text>
+      </Box>
+    </Box>
+  )
+}
 
 function logRow(Text: TextTag, entry: LogEntry) {
   const mark = entry.status === 'run' ? '…' : entry.status === 'err' ? '✗' : '✓'

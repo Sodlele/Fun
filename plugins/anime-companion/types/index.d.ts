@@ -58,6 +58,8 @@ declare module 'claude-code' {
       stats: Stats
       /** The person closed the pane: session.start stops reopening it. */
       dismissed: boolean
+      /** Which /claude-chan row in the chat draws the live scene: the latest. */
+      inlineSeq: number
     }
   }
 }

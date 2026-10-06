@@ -93,3 +93,57 @@ describe('the pane', () => {
     expect(await ui.find({ type: 'Text', text: /Turn complete: 2s/ })).toBeDefined()
   })
 })
+
+describe('in the chat, where the phone sees her', () => {
+  test('/claude-chan draws the live scene in its row and reports the clients', async ($, on) => {
+    mock.clock(on, { now: 5_000_000 })
+    on('ui.status', () => ({ value: undefined }))
+    on('ui.open', () => ({ value: { isPlaced: false, reason: 'no attached surface places panes' } }))
+    on('session.surfaces', () => ({ value: ['mobile'] }))
+
+    const ran = await $.command.run({
+      command: 'claude-chan',
+      args: '',
+      origin: { kind: 'composer' },
+      presentation: { isFullscreen: false, columns: 40 },
+    })
+    expect(ran.text).toContain('#1')
+    expect(ran.text).toContain('mobile')
+
+    for (const surface of ['mobile', 'desktop', 'terminal'] as const) {
+      const ui = await $.ui.mount({
+        plugin: PLUGIN,
+        surface,
+        component: 'CommandOutput',
+        props: { command: 'claude-chan', args: '', text: ran.text ?? '', isErrored: false },
+        viewport: { columns: 40, rows: 60 },
+      })
+      expect(await ui.find({ type: surface === 'terminal' ? 'Raster' : 'Svg' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /не показана/ })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
+  test('every tool row gets her line above it', async ($, on) => {
+    on('ui.render', { component: 'ToolUse' }, () => ({ type: 'Text', props: {}, children: ['Read(app.ts)'] }))
+
+    for (const surface of ['mobile', 'desktop', 'terminal'] as const) {
+      const ui = await $.ui.mount({
+        plugin: PLUGIN,
+        surface,
+        component: 'ToolUse',
+        props: {
+          tool_use_id: 'toolu_1',
+          tool: 'Read',
+          input: { file_path: '/repo/app.ts' },
+          isRunning: false,
+          isErrored: false,
+          isInterrupted: false,
+        },
+      })
+      expect(await ui.find({ type: 'Text', text: /\(・ω・\)/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Read(app.ts)' })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+})
