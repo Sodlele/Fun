@@ -1,2 +1,4 @@
 # Laid by Claude Code each time it loads a plugin from a folder.
 .claude-plugin/types/
+# The address of your own Claude-chan Live page.
+live-url.txt

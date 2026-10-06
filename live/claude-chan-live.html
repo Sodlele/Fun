@@ -1,0 +1,283 @@
+<title>Claude-chan Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=M+PLUS+Rounded+1c:wght@500;800&display=swap">
+<style>
+/* Layout: one column, an arcade night stage on top, the visual-novel box, HUD, then the quest log. Single dark world by choice. */
+:root {
+  --night: #14122b;
+  --panel: #1f1b3d;
+  --panel-2: #2a2552;
+  --ink: #f4eefc;
+  --muted: #a99fd0;
+  --claude: #e8835f;
+  --sakura: #ffb7d0;
+  --gold: #ffd96a;
+  --mint: #6dffa0;
+  --ouch: #ff6b6b;
+  --mood: #e8835f;
+  --pixel: "Press Start 2P", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --round: "M PLUS Rounded 1c", system-ui, -apple-system, "Segoe UI", "Apple Color Emoji", sans-serif;
+  color-scheme: dark;
+}
+html, body { background: var(--night); color: var(--ink); }
+body { font-family: var(--round); font-weight: 500; font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 16px 16px 28px; display: grid; gap: 14px; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.brand { font-family: var(--pixel); font-size: 13px; letter-spacing: 0.08em; color: var(--sakura); margin-right: auto; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--ink); border: 1px solid var(--mood); white-space: nowrap; }
+.link { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.link b { font-weight: 800; color: var(--muted); }
+.link[data-live="1"] b { color: var(--mint); }
+.stage { position: relative; border: 3px solid var(--mood); border-radius: 6px; overflow: hidden; background: var(--panel); box-shadow: 0 0 0 3px var(--night), 0 0 28px -6px var(--mood); transition: border-color .3s, box-shadow .3s; }
+.stage canvas { display: block; width: 100%; height: auto; aspect-ratio: 64 / 38; image-rendering: pixelated; image-rendering: crisp-edges; }
+.flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.flash.go { animation: flash .35s ease-out; }
+@keyframes flash { from { opacity: .55; } to { opacity: 0; } }
+.combo { position: absolute; right: 10px; top: 8px; font-family: var(--pixel); font-size: clamp(12px, 3.2vw, 20px); color: var(--gold); text-shadow: 2px 2px 0 #000; }
+.combo small { display: block; font-size: .55em; color: var(--ink); text-align: right; margin-top: 4px; }
+.combo.pop { animation: pop .3s ease-out; }
+@keyframes pop { 0% { transform: scale(1.5); } 100% { transform: scale(1); } }
+.dialog { position: relative; background: var(--panel); border: 3px solid var(--mood); border-radius: 10px; padding: 22px 16px 14px; min-height: 92px; transition: border-color .3s; }
+.plate { position: absolute; top: -14px; left: 14px; background: var(--claude); color: #1a1030; font-family: var(--pixel); font-size: 11px; padding: 6px 10px; border-radius: 4px; }
+.plate span { margin-left: 6px; font-family: var(--round); font-weight: 800; font-size: 13px; }
+.line { margin: 0; font-size: 17px; min-height: 1.5em; overflow-wrap: anywhere; }
+.line::after { content: "▼"; font-size: 10px; color: var(--gold); margin-left: 6px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.hud { display: grid; gap: 8px; background: var(--panel); border-radius: 10px; padding: 12px 14px; }
+.lv { display: flex; align-items: center; gap: 10px; font-family: var(--pixel); font-size: 11px; color: var(--claude); }
+.xp { flex: 1; height: 10px; background: var(--panel-2); border-radius: 2px; overflow: hidden; min-width: 0; }
+.xp i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--claude), var(--gold)); transition: width .5s; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.facts b { color: var(--ink); font-weight: 800; }
+.log { background: var(--panel); border-radius: 10px; padding: 12px 14px; }
+.log h2 { margin: 0 0 8px; font-family: var(--pixel); font-size: 11px; color: var(--sakura); letter-spacing: .06em; }
+.log ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.log li { display: grid; grid-template-columns: 1.4em 1.6em 1fr; gap: 4px; font-size: 14px; align-items: baseline; min-width: 0; }
+.log li span:last-child { overflow-wrap: anywhere; min-width: 0; }
+.log li.run { color: var(--gold); }
+.log li.err { color: var(--ouch); }
+.log li.ok { color: var(--muted); }
+.log li.done { color: var(--gold); font-weight: 800; }
+.log li.agent span:last-child { padding-left: 1em; }
+.empty { color: var(--muted); font-size: 14px; }
+.hint { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .flash.go, .combo.pop, .line::after { animation: none; } }
+</style>
+
+<main class="wrap">
+  <header class="bar">
+    <span class="brand">CLAUDE-CHAN</span>
+    <span class="chip" id="mood">ждёт</span>
+    <span class="link" id="link"><b>●</b> <span id="linkText">демо: жду сигнала из сессии</span></span>
+  </header>
+
+  <section class="stage" aria-label="Сцена Claude-chan">
+    <canvas id="stage" width="64" height="38"></canvas>
+    <div class="flash" id="flash"></div>
+    <div class="combo" id="combo" hidden></div>
+  </section>
+
+  <section class="dialog" aria-live="polite">
+    <div class="plate">Claude-chan<span id="face">(◕‿◕✿)</span></div>
+    <p class="line" id="line">Жду твоих приказов, сэмпай!</p>
+  </section>
+
+  <section class="hud">
+    <div class="lv"><span id="lv">Ур. 1</span><div class="xp"><i id="xp"></i></div><span id="best">рекорд 0</span></div>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section class="log">
+    <h2>ЖУРНАЛ КВЕСТОВ</h2>
+    <ol id="log"></ol>
+    <p class="empty" id="empty">Пока тихо. Когда Claude начнёт работать в сессии, здесь появится каждое действие.</p>
+  </section>
+
+  <p class="hint">Страница сама получает состояние из сессии Claude Code с модом anime-companion. Пока данных нет, Claude-chan показывает демо всех состояний.</p>
+</main>
+<script>
+(()=>{var g={K:3809824,H:13199167,h:9848876,L:15768166,S:16770773,s:15909542,B:16751278,W:16777215,E:15237183,e:5907992,M:12730703,O:16315370,o:14274495,N:4017280,n:2898022,m:4609935,R:14251863,r:10898742,C:16757642,Y:16767338,y:14723386,G:7208864,g:1927997,D:2830138,d:1316380,P:16758736,p:16748472,A:10475775,V:12029183,v:8016593,Z:15265023,T:9071178};function X(q){let j=q.length,z=Math.max(...q.map(($)=>$.length)),J=new Int32Array(z*j).fill(-1);return q.forEach(($,G)=>{for(let F=0;F<$.length;F++){let Q=g[$[F]??"."];if(Q!==void 0)J[G*z+F]=Q}}),{w:z,h:j,px:J}}function l(q){return q.map((j)=>j+[...j].reverse().join(""))}var p=X(l(["..............","..............","........KKKKKK","......KKHHHHHH",".....KHHHHHHHH","....KHHHHLLLHH","...KHHHLLLHHHH","...KHHHHHHHHHH","..KHHHHHHHHHHH","..KHHHHHHHHHHH",".KHHHHHHHHHHHH",".KHHHHhHHHHhHH",".KHHHhShHHhShH",".KHhhSSShhSSSh",".KHLhSSSSSSSSS","KHHLhSSSSSSSSS","KHHLhSSSSSSSSS","KHhLhSSSSSSSSS","KHhHSSSSSSSSSS","KHhHhSSSSSSSSS","KHhHhKsSSSSSSS","KHhHh.KKsSSSSS","KHhHh...KKKKss","KHhHh..KNNNKss",".KhHh.KNNNNNKR",".KhhK.KNNNNNRR","..KK..KONNNKRr","......KOOONKRR","......KOOOOKOR","......KoOOOOOO","......KnnnnnnN",".....KnnmnnnmN","....KnnmnnnnmN","....KKKKKKKKKK","........KWWK..","........KrrK.."])),c=X(["..............KK............",".............KLK............","..............KHK...........","............................","............................",".....................K......","....................KRK.....","...................KRWRK....","....................KRK.....",".....................K......"]),v=X([".....K","....KO","....KO","...KOO","...KOo","...KSS","....KK"]),i=d(v),e=X([".....KK.","....KSSK","....KSSK","....KOOK","...KOOK.","...KOOK.","..KOOK..",".KOOK...","KOOK....","KOK....."]),n=X(["..KSK...",".KSSK...",".KOOK...","..KOOK..","...KOOK.","...KOOK.","..KOOK.."]),f=X(["....KOO..............OOK....","...KOOO..............OOOK...","...KOOK..............KOOK...","....KSSK............KSSK....",".....KK..............KK....."]);function d(q){let j=new Int32Array(q.w*q.h);for(let z=0;z<q.h;z++)for(let J=0;J<q.w;J++)j[z*q.w+J]=q.px[z*q.w+(q.w-1-J)];return{w:q.w,h:q.h,px:j}}var T={open:X(["KKKKK","KWeeK","KeeEK","KEEEK",".KKK."]),up:X(["KKKKK","KeeWK","KEeeK","KEEEK",".KKK."]),down:X(["KKKKK","KWEEK","KEEeK","KEeeK",".KKK."]),closed:X([".....",".....",".....","KKKKK","....."]),happy:X([".....","..K..",".K.K.","K...K","....."]),shine:X(["KKKKK","KWEYK","KEYEK","KYEWK",".KKK."]),focus:X([".....","KKKKK","KWeEK","KeEEK",".KKK."]),xLeft:X(["K....",".KK..","...KK",".KK..","K...."]),xRight:X(["....K","..KK.","KK...","..KK.","....K"])},y={smile:X(["K..K",".KK."]),open:X(["KMMK",".KK."]),small:X(["....",".KK."]),flat:X([".KK.","...."]),wavy:X(["K.K.",".K.K"]),oh:X([".KK.","KMMK"]),cat:X(["K.KK.K",".K..K."])},I=X(["B.B."]),x=X([".KKKKKKKKKKKK.","KWWWWWTWWWWWWK","KWKKWWTWKKKWWK","KWWWWWTWWWWWWK","KWKKKWTWKKWWWK","KWWWWWTWWWWWWK","KRRRRRTRRRRRRK",".KKKKKKKKKKKK."]),m=X([".KKKKKKKKKKKKKK.","KDDDDDDDDDDDDDDK","KDddddddddddddDK","KDddddddddddddDK","KDddddddddddddDK","KDddddddddddddDK","KDDDDDDDDDDDDDDK","KDDDDDDRDDDDDDDK",".KKKKKKKKKKKKKK."]),s=X(["....KKKK....",".KKKYyyYKKK.","KTTTTTTTTTTK","KTWWWWWWWWTK","KTWGWKKKKWTK","KTWWWWWWWWTK","KTWGWKKKWWTK","KTWWWWWWWWTK","KTWRWKKKKWTK","KTWWWWWWWWTK",".KKKKKKKKKK."]),u=X([".KKKK..","KAZAAK.","KZAAAK.","KAAAAK.",".KKKKT.",".....TT","......T"]),L=X(["..Y..",".YYY.","YYWYY",".YYY.",".Y.Y.","..R..","..R..","..R.."]),r=X([".A.","AZA","AAA",".A."]),H=X([".pp.pp.","pPPpPPp","pPPPPPp",".pPPPp.","..pPp..","...p..."]),b=X([".KKK.","KHHHK","KSeSK",".KOK.",".K.K."]),h=X(["ZZZZ","..Z.",".Z..","ZZZZ"]),a=X(["ZZZ",".Z.","ZZZ"]),w=X([".KK",".KK",".K.","KK.","KK."]),t=X([".YYY.","Y...Y","...Y.","..Y..",".....","..Y.."]),o=X([".R.",".R.",".R.","...",".R."]),_=X(["..KKKKKKKKKKK..",".KWWWWWWWWWWWK.","KWWWWWWWWWWWWWK","KWWWWWWWWWWWWWK","KWWWWWWWWWWWWWK",".KWWWWWWWWWWWK.","..KKKKKKKKKKK.."]),jj={idle:{eyes:"open",mouth:"smile",arms:"down",blush:!0},sleep:{eyes:"closed",mouth:"small",arms:"down",blush:!0},think:{eyes:"up",mouth:"flat",arms:"chin",blush:!1},talk:{eyes:"open",mouth:"open",arms:"down",blush:!0},read:{eyes:"down",mouth:"small",arms:"front",blush:!1},search:{eyes:"focus",mouth:"oh",arms:"up",blush:!1},edit:{eyes:"shine",mouth:"cat",arms:"up",blush:!0},bash:{eyes:"focus",mouth:"flat",arms:"front",blush:!1},agent:{eyes:"shine",mouth:"open",arms:"up",blush:!0},plan:{eyes:"down",mouth:"smile",arms:"front",blush:!1},ask:{eyes:"open",mouth:"oh",arms:"chin",blush:!0},error:{eyes:"xLeft",mouth:"wavy",arms:"down",blush:!1},done:{eyes:"happy",mouth:"open",arms:"up",blush:!0}},E={idle:[2760525,7028602,14251863],sleep:[461599,1317693,2765926],think:[988736,2502778,5926872],talk:[3809364,9063046,15769784],read:[3875860,8014372,14721120],search:[731955,1532011,7002320],edit:[4853810,10496602,16743080],bash:[133125,464653,1191968],agent:[1903418,4857722,12029183],plan:[2240538,4876842,12116080],ask:[2760768,5917328,16767338],error:[2753800,6950678,16730698],done:[5909000,12610068,16767338]};function A({w:q,h:j,mood:z,t:J,combo:$}){let G=new Int32Array(q*j);return zj(G,q,j,z,J),Jj(G,q,j,z,J,$),qj(G,q,j,z,J,$),G}function R(q){return Math.max(0,Math.floor((q-28)/2)-(q>=46?6:0))}function qj(q,j,z,J,$,G){let F=J==="error"&&Math.floor($/60)%2===0?1:0,Q=J==="sleep"?Math.floor($/1600)%2:Math.floor($/700)%2,Y=J==="done"?Math.round(Math.abs(Math.sin($/180))*2):0,Z=R(j)+F,V=Math.max(0,z-36-1)+Q-Y;$j(q,j,z,Z,V,J,$),Qj(q,j,z,Z,V,J,$,G)}function M(q,j,z){let J=(q>>16&255)+((j>>16&255)-(q>>16&255))*z,$=(q>>8&255)+((j>>8&255)-(q>>8&255))*z,G=(q&255)+((j&255)-(q&255))*z;return Math.round(J)<<16|Math.round($)<<8|Math.round(G)}function U(q,j,z,J,$,G){if(J<0||$<0||J>=j||$>=z)return;q[$*j+J]=G}function D(q,j,z,J,$,G){for(let F=0;F<J.h;F++)for(let Q=0;Q<J.w;Q++){let Y=J.px[F*J.w+Q];if(Y!==-1)U(q,j,z,$+Q,G+F,Y)}}function W(q){let j=(q|0)*374761393+668265263;return j=(j^j>>>13)*1274126177,((j^j>>>16)>>>0)/4294967296}function zj(q,j,z,J,$){let[G,F,Q]=E[J],Y=J==="error"?0.25*Math.max(0,Math.sin($/90)):0;for(let Z=0;Z<z;Z++){let V=Z/Math.max(1,z-1),K=V<0.6?M(G,F,V/0.6):M(F,Q,(V-0.6)/0.4);if(Y>0)K=M(K,16719920,Y);for(let P=0;P<j;P++)q[Z*j+P]=K}}function Jj(q,j,z,J,$,G){let[,,F]=E[J];if(J==="bash"){for(let Q=0;Q<j;Q+=2){let Y=0.012+W(Q)*0.02,Z=4+Math.floor(W(Q+99)*8),V=Math.floor(($*Y+W(Q+7)*z*3)%(z+Z));for(let K=0;K<Z;K++){let P=V-K;U(q,j,z,Q,P,M(7208864,464653,K/Z))}}return}if(J==="done"||J==="agent"){let Q=R(j)+14,Y=z*0.35,Z=$/(J==="done"?1400:2600);for(let V=0;V<z;V++)for(let K=0;K<j;K++){let P=Math.atan2(V-Y,(K-Q)*0.9)+Z;if(Math.sin(P*8)>0.55)q[V*j+K]=M(q[V*j+K],F,0.28)}}if(J==="edit"){let Q=Math.min(14,5+G);for(let Y=0;Y<Q;Y++){let Z=Math.floor(W(Y*31+Math.floor($/120))*z),V=6+Math.floor(W(Y*17)*14),K=Math.floor((W(Y*13)*j+$*0.12)%(j+V))-V;for(let P=K;P<K+V;P++)U(q,j,z,P,Z,M(q[Z*j+Math.max(0,Math.min(j-1,P))],16777215,0.5))}}if(J==="think"||J==="sleep"||J==="idle"||J==="ask")for(let Q=0;Q<Math.floor(j*z/70);Q++){let Y=Math.floor(W(Q*3+1)*j),Z=Math.floor(W(Q*3+2)*z*0.6),V=Math.sin($/(400+W(Q)*900)+Q);if(V>0.2)U(q,j,z,Y,Z,M(8949952,16777215,V))}if(J==="sleep"){let Q=j-7,Y=5;for(let Z=-4;Z<=4;Z++)for(let V=-4;V<=4;V++){let K=V*V+Z*Z<=16,P=(V+2)*(V+2)+(Z-1)*(Z-1)<=10;if(K&&!P)U(q,j,z,Q+V,5+Z,16774344)}}if(J==="search"){let Q=j*0.72,Y=z*0.35,Z=$/40%Math.max(j,z);for(let V=0;V<360;V+=3){let K=Math.round(Q+Math.cos(V*Math.PI/180)*Z),P=Math.round(Y+Math.sin(V*Math.PI/180)*Z*0.6);U(q,j,z,K,P,M(7002320,16777215,0.3))}}if(J==="read"||J==="plan")for(let Q=0;Q<18;Q++){let Y=Math.floor((W(Q*5)*j+Math.sin($/900+Q)*3+j)%j),Z=Math.floor((W(Q*7)*z-$*0.004*(1+W(Q))+z*10)%z);U(q,j,z,Y,Z,M(F,16777215,0.5))}if(J!=="error"){let Q=Math.max(4,Math.floor(j/6));for(let Y=0;Y<Q;Y++){let Z=0.006+W(Y*11)*0.008,V=Math.floor((W(Y*23)*z*4+$*Z)%(z+4))-2,K=Math.floor((W(Y*29)*j+$*0.004+Math.sin($/500+Y)*2+j*4)%j),P=W(Y)>0.5?16758736:16748472;if(U(q,j,z,K,V,P),W(Y*41)>0.5)U(q,j,z,K+1,V,M(P,16777215,0.3))}}}function $j(q,j,z,J,$,G,F){let Q=jj[G];D(q,j,z,p,J,$),D(q,j,z,c,J,$);let Y=(G==="idle"||G==="talk"||G==="read"||G==="plan"||G==="ask")&&F%3600<140,Z=Y?"closed":Q.eyes,V=Z==="xLeft"?"xRight":Z;if(G==="search"&&!Y)V="closed";if(G==="read"&&Math.floor(F/900)%2===1&&!Y)Z=V="open";if(D(q,j,z,T[Z],J+5,$+13),D(q,j,z,T[V],J+18,$+13),Q.blush)D(q,j,z,I,J+4,$+18),D(q,j,z,I,J+20,$+18);let K=Q.mouth;if(G==="talk"||G==="agent")K=Math.floor(F/160)%2===0?"open":"small";if(G==="done")K=Math.floor(F/300)%3===0?"cat":"open";let P=y[K];if(D(q,j,z,P,J+14-Math.floor(P.w/2),$+19),Q.arms==="down"||Q.arms==="chin"||Q.arms==="up")D(q,j,z,v,J+2,$+24);if(Q.arms==="down")D(q,j,z,i,J+20,$+24);if(Q.arms==="up"){let C=G==="done"||G==="edit"?Math.floor(F/250)%2:0;D(q,j,z,e,J+20+C,$+15)}if(Q.arms==="chin")D(q,j,z,n,J+16,$+20);if(Q.arms==="front")D(q,j,z,f,J,$+24)}function Qj(q,j,z,J,$,G,F,Q){let Y=J+28-2,Z=G==="done"||G==="edit"?Math.floor(F/250)%2:0;switch(G){case"read":{if(D(q,j,z,x,J+7,$+25),Math.floor(F/900)%4===3)for(let V=1;V<7;V++)U(q,j,z,J+14+V%2,$+25+V,16777215);break}case"plan":{D(q,j,z,s,J+8,$+23);let V=Math.floor(F/500)%3;U(q,j,z,J+11,$+27+V*2,7208864);break}case"bash":{D(q,j,z,m,J+6,$+24);for(let V=0;V<4;V++){let K=V+Math.floor(F/220),P=3+Math.floor(W(K)*9);for(let C=0;C<P;C++)U(q,j,z,J+9+C,$+26+V,W(K*7+C)>0.25?7208864:1927997)}if(Math.floor(F/400)%2===0)U(q,j,z,J+9+11,$+29,16777215);break}case"search":{D(q,j,z,u,J+21,$+9+Math.floor(F/300)%2);break}case"edit":{D(q,j,z,L,J+23+Z,$+7),O(q,j,z,J+25+Z,$+10,F,Math.min(8,3+Q));break}case"agent":{D(q,j,z,L,J+23,$+7);let V=$+36-2;for(let K=0;K<Math.min(3,1+Math.floor(Q/3));K++){let P=K%2===0?J-7-K*3:J+28+1+K*2,C=V-6+Math.floor(F/250+K)%2;D(q,j,z,b,P,C)}Vj(q,j,z,J+14,V,F);break}case"think":{N(q,j,z,Y,$,F,"dots");break}case"ask":{N(q,j,z,Y,$,F,"q");break}case"talk":{let V=Math.floor(F/400)%3;D(q,j,z,w,Y+1+V,$+4-V);break}case"error":{D(q,j,z,r,J+22,$+6+Math.floor(F/200)%2),D(q,j,z,o,J+25,$+1);break}case"sleep":{let V=Math.floor(F/700)%3;D(q,j,z,a,Y,$+6-V),D(q,j,z,h,Y+4,$+1-(V+1)%3);break}case"done":{U(q,j,z,J+25+Z,$+14,3809824),U(q,j,z,J+27+Z,$+14,3809824),U(q,j,z,J+25+Z,$+13,3809824),U(q,j,z,J+27+Z,$+13,3809824),O(q,j,z,J+14,$+10,F,10),D(q,j,z,H,J-6,$+6+Math.floor(F/300)%2);break}case"idle":{if(Q>0&&Math.floor(F/2000)%2===0)D(q,j,z,H,Y+1,$+4);break}}}function N(q,j,z,J,$,G,F){let Q=Math.min(J,j-_.w),Y=Math.max(0,$-1);if(U(q,j,z,J-2,Y+11,16777215),U(q,j,z,J-1,Y+9,16777215),U(q,j,z,J,Y+9,16777215),D(q,j,z,_,Q,Y),F==="q"){D(q,j,z,t,Q+5,Y+1-Math.floor(G/400)%2);return}let Z=1+Math.floor(G/350)%3;for(let V=0;V<Z;V++)U(q,j,z,Q+4+V*3,Y+3,3809824)}function O(q,j,z,J,$,G,F){for(let Q=0;Q<F;Q++){let Y=(G/600+W(Q*13))%1,Z=W(Q*7)*Math.PI*2,V=2+Y*10,K=Math.round(J+Math.cos(Z)*V),P=Math.round($+Math.sin(Z)*V*0.7),C=Y<0.5?16777215:16767338;if(U(q,j,z,K,P,C),Y<0.35)U(q,j,z,K-1,P,16767338),U(q,j,z,K+1,P,16767338),U(q,j,z,K,P-1,16767338),U(q,j,z,K,P+1,16767338)}}function Vj(q,j,z,J,$,G){let F=G/500;for(let Q=0;Q<360;Q+=4){let Y=Q*Math.PI/180,Z=Math.round(J+Math.cos(Y+F)*16),V=Math.round($+Math.sin(Y+F)*2);U(q,j,z,Z,V,Q%24===0?16777215:12029183)}}var Yj={ru:{idle:["Жду твоих приказов, сэмпай! (◕‿◕✿)","Чем займёмся? ♪","Я тут, если что~ (｡•̀ᴗ-)✧","Готова к новому квесту!"],sleep:["Zzz… ещё пять минуточек… (－ω－) zzZ","Сплю… но одним глазом слежу~","Мне снится идеальный код… zzZ"],think:["Хмм… дай подумать… (・・ )?","Так-так-так… кажется, понимаю!","Мозговой штурм! ( •̀ ω •́ )✧","Складываю пазл в голове…"],talk:["Сейчас всё объясню~ ♪","Слушай внимательно, сэмпай!","Пишу ответ… (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧"],read:["Читаю {d}… (・ω・)","Так, что у нас в {d}?","Изучаю {d} очень внимательно!","Хм-хм, {d}… интересненько!"],search:["Ищу {d}… (⌐■_■)","Детектив Claude-chan на деле!","Где же ты прячешься, {d}?","Сканирую всё подряд~"],edit:["Магия кода: {d}! ✧*｡٩(ˊᗜˋ*)و✧*｡","Правлю {d} — смотри, как блестит!","Тык-тык… {d} готов почти!","Кастую рефакторинг на {d}!"],bash:["Запускаю: {d}","Терминал, повинуйся! (ง •̀_•́)ง","Клац-клац по клавишам… {d}","Хакерский режим ON ⌨"],agent:["Призываю помощницу: {d}! ⊂(◉‿◉)つ","Каге Буншин но Дзюцу! {d}","Команда, вперёд! {d}"],plan:["Составляю план… ✎","Пункт за пунктом~ ☑","Список дел обновлён!"],ask:["Сэмпай, мне нужен твой ответ! (｡•́︿•̀｡)","Вопросик к тебе~ ?","Подскажешь, как лучше?"],error:["Ай! Что-то сломалось… (>_<)","Упс… {d} не вышло (╥﹏╥)","Ошибочка! Сейчас починю!"],done:["Готово! Ура-а-а! ٩(◕‿◕)۶","Миссия выполнена! V(＾▽＾)V","Сугой! Всё сделано ✧","Ещё одна победа! ☆彡"]},en:{idle:["Awaiting orders, senpai! (◕‿◕✿)","What shall we do next? ♪","I'm right here~ (｡•̀ᴗ-)✧","Ready for a new quest!"],sleep:["Zzz… five more minutes… (－ω－) zzZ","Sleeping… with one eye open~","Dreaming of perfect code… zzZ"],think:["Hmm… let me think… (・・ )?","Wait, wait… I think I get it!","Brainstorm! ( •̀ ω •́ )✧","Putting the puzzle together…"],talk:["Let me explain~ ♪","Listen closely, senpai!","Writing the answer… (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧"],read:["Reading {d}… (・ω・)","What's inside {d}?","Studying {d} very carefully!","Hmm-hmm, {d}… interesting!"],search:["Searching for {d}… (⌐■_■)","Detective Claude-chan on the case!","Where are you hiding, {d}?","Scanning everything~"],edit:["Code magic: {d}! ✧*｡٩(ˊᗜˋ*)و✧*｡","Polishing {d}, look how it shines!","Tap-tap… {d} almost done!","Casting refactor on {d}!"],bash:["Running: {d}","Terminal, obey me! (ง •̀_•́)ง","Clack-clack… {d}","Hacker mode ON ⌨"],agent:["Summoning a helper: {d}! ⊂(◉‿◉)つ","Shadow clone jutsu! {d}","Team, go! {d}"],plan:["Making a plan… ✎","Step by step~ ☑","To-do list updated!"],ask:["Senpai, I need your answer! (｡•́︿•̀｡)","A little question for you~ ?","Which way is better?"],error:["Ouch! Something broke… (>_<)","Oops… {d} failed (╥﹏╥)","An error! I'll fix it!"],done:["Done! Yay! ٩(◕‿◕)۶","Mission complete! V(＾▽＾)V","Sugoi! All finished ✧","Another victory! ☆彡"]}};var S={idle:"✿",sleep:"☾",think:"\uD83D\uDCAD",talk:"\uD83D\uDCAC",read:"\uD83D\uDCD6",search:"\uD83D\uDD0D",edit:"✨",bash:"⌨",agent:"\uD83D\uDC6F",plan:"\uD83D\uDCCB",ask:"❓",error:"\uD83D\uDCA5",done:"\uD83C\uDFC6"},Zj={ru:{tools:["действие","действия","действий"],turns:["ход","хода","ходов"]},en:{tools:["action","actions","actions"],turns:["turn","turns","turns"]}};function B(q,j,z){let[J,$,G]=Zj[q][z];if(q==="en")return`${j} ${j===1?J:G}`;let F=j%100,Q=j%10,Y=F>=11&&F<=14?G:Q===1?J:Q>=2&&Q<=4?$:G;return`${j} ${Y}`}function k(q,j,z,J){let $=Yj[q][j];return($[Math.abs(J)%$.length]??"").replace("{d}",z||"…")}globalThis.Chan={scene:A,lineFor:k,ICONS:S,count:B};})();
+
+</script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id)
+  const FACES = { idle: '(◕‿◕✿)', sleep: '(－ω－) zzZ', think: '(・・ )?', talk: '(ﾉ◕ヮ◕)ﾉ', read: '(・ω・)', search: '(⌐■_■)', edit: '٩(ˊᗜˋ*)و', bash: '(ง •̀_•́)ง', agent: '⊂(◉‿◉)つ', plan: '(｀・ω・´)', ask: '(｡•́︿•̀｡)', error: '(>_<)', done: 'V(＾▽＾)V' }
+  const ACCENT = { idle: '#e8835f', sleep: '#7f8cff', think: '#8fa2ff', talk: '#f0a0b8', read: '#e0a060', search: '#6ad8d0', edit: '#ff7aa8', bash: '#6dffa0', agent: '#b78cff', plan: '#b8e070', ask: '#ffd96a', error: '#ff5a5a', done: '#ffd96a' }
+  const VERB = { idle: 'ждёт', sleep: 'спит', think: 'думает', talk: 'отвечает', read: 'читает', search: 'ищет', edit: 'колдует над кодом', bash: 'в терминале', agent: 'призывает помощниц', plan: 'планирует', ask: 'спрашивает тебя', error: 'ой, ошибка', done: 'победа!' }
+  const DEMO = [['idle', ''], ['think', ''], ['read', 'register.tsx'], ['search', 'TODO'], ['edit', 'sprite.ts'], ['bash', 'npm test'], ['error', 'npm test'], ['agent', 'Explore'], ['plan', ''], ['talk', ''], ['done', '42s'], ['sleep', '']]
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  // The stage: 64x38 pixels, scaled up crisp by CSS.
+  const canvas = $('stage')
+  const ctx = canvas.getContext('2d')
+  const W = 64, H = 38
+  const img = ctx.createImageData(W, H)
+  let mood = 'idle'
+  let combo = 0
+  let painted = 0
+  function paint(t) {
+    const px = Chan.scene({ w: W, h: H, mood, t, combo })
+    const d = img.data
+    for (let i = 0; i < px.length; i++) {
+      const c = px[i]
+      d[i * 4] = (c >> 16) & 255
+      d[i * 4 + 1] = (c >> 8) & 255
+      d[i * 4 + 2] = c & 255
+      d[i * 4 + 3] = 255
+    }
+    ctx.putImageData(img, 0, 0)
+  }
+  function frame(now) {
+    if (now - painted >= (reduce ? 600 : 83)) {
+      paint(now)
+      painted = now
+    }
+    requestAnimationFrame(frame)
+  }
+  paint(0)
+  requestAnimationFrame(frame)
+
+  // Her line, typed out like a visual novel.
+  let typing = 0
+  let said = ''
+  function say(words) {
+    if (words === said) return
+    said = words
+    const el = $('line')
+    clearInterval(typing)
+    const chars = [...words]
+    if (reduce) { el.textContent = words; return }
+    let n = 0
+    el.textContent = ''
+    typing = setInterval(() => {
+      el.textContent = chars.slice(0, ++n).join('')
+      if (n >= chars.length) clearInterval(typing)
+    }, 26)
+  }
+
+  function setMood(next) {
+    if (!FACES[next] || next === mood) return
+    mood = next
+    document.documentElement.style.setProperty('--mood', ACCENT[next])
+    $('mood').textContent = `${Chan.ICONS[next]} ${VERB[next]}`
+    $('face').textContent = FACES[next]
+    const flash = $('flash')
+    flash.classList.remove('go')
+    void flash.offsetWidth
+    flash.classList.add('go')
+  }
+
+  function setCombo(n) {
+    const el = $('combo')
+    if (n === combo && !el.hidden === n > 0) return
+    const grew = n > combo
+    combo = n
+    el.hidden = n <= 0
+    el.textContent = ''
+    if (n > 0) {
+      el.append(`${n} COMBO${n >= 10 ? '!!' : '!'}`)
+      const small = document.createElement('small')
+      small.textContent = n >= 25 ? 'сугой!!' : n >= 10 ? 'сугой!' : '⚡'
+      el.append(small)
+      if (grew) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop') }
+    }
+  }
+
+  function level(tools) {
+    const lv = Math.floor(Math.sqrt(tools / 3)) + 1
+    const from = 3 * (lv - 1) ** 2
+    const to = 3 * lv ** 2
+    return { lv, progress: (tools - from) / (to - from) }
+  }
+
+  function render(s) {
+    setMood(String(s.mood))
+    say(String(s.line || ''))
+    setCombo(Number(s.combo) || 0)
+    const tools = Number(s.tools) || 0
+    const { lv, progress } = level(tools)
+    $('lv').textContent = `Ур. ${lv}`
+    $('xp').style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`
+    $('best').textContent = `рекорд ${Number(s.bestCombo) || 0}`
+    const facts = [
+      [Chan.count('ru', Number(s.turns) || 0, 'turns'), ''],
+      [Chan.count('ru', tools, 'tools'), ''],
+      [`📖 ${s.reads || 0}`, 'чтение'], [`✨ ${s.edits || 0}`, 'правки'], [`⌨ ${s.shells || 0}`, 'терминал'],
+      [`🔍 ${s.searches || 0}`, 'поиск'], [`👯 ${s.agents || 0}`, 'агенты'], [`💥 ${s.errors || 0}`, 'ошибки'],
+    ]
+    const box = $('facts')
+    box.textContent = ''
+    for (const [value, label] of facts) {
+      const span = document.createElement('span')
+      const b = document.createElement('b')
+      b.textContent = value
+      span.append(b)
+      if (label) span.append(` ${label}`)
+      box.append(span)
+    }
+    const rows = Array.isArray(s.log) ? s.log.slice(-14).reverse() : []
+    const list = $('log')
+    list.textContent = ''
+    $('empty').hidden = rows.length > 0
+    for (const row of rows) {
+      const li = document.createElement('li')
+      const status = row.status === 'run' ? 'run' : row.status === 'err' ? 'err' : 'ok'
+      li.className = `${status}${row.mood === 'done' ? ' done' : ''}${row.isAgent ? ' agent' : ''}`
+      const mark = document.createElement('span')
+      mark.textContent = status === 'run' ? '…' : status === 'err' ? '✗' : '✓'
+      const icon = document.createElement('span')
+      icon.textContent = Chan.ICONS[row.mood] || '•'
+      const words = document.createElement('span')
+      words.textContent = `${row.isAgent ? '↳ ' : ''}${row.text || ''}`
+      li.append(mark, icon, words)
+      list.append(li)
+    }
+  }
+
+  // Demo until the session speaks: every state in turn.
+  let isLive = false
+  let demoStep = 0
+  const demoLog = []
+  function demoTick() {
+    if (isLive) return
+    const [m, d] = DEMO[demoStep % DEMO.length]
+    demoStep++
+    if (!['idle', 'think', 'talk', 'done', 'sleep'].includes(m)) {
+      demoLog.push({ mood: m, text: d ? `демо · ${d}` : 'демо', status: m === 'error' ? 'err' : 'ok', isAgent: false })
+    }
+    if (m === 'done') demoLog.push({ mood: 'done', text: 'демо · ход завершён', status: 'ok', isAgent: false })
+    render({ mood: m, line: Chan.lineFor('ru', m, d, demoStep), combo: m === 'idle' || m === 'sleep' ? 0 : demoStep % DEMO.length, tools: demoStep, turns: Math.floor(demoStep / 6), log: demoLog.slice(-8) })
+  }
+  demoTick()
+  const demoTimer = setInterval(demoTick, 3600)
+
+  // Live: one subscription to the state the mod writes.
+  let updatedAt = 0
+  function showLink() {
+    const text = $('linkText')
+    const link = $('link')
+    if (!isLive) return
+    const ago = Math.max(0, Math.round((Date.now() - updatedAt) / 1000))
+    link.dataset.live = ago < 600 ? '1' : '0'
+    text.textContent = ago < 5 ? 'в эфире' : ago < 60 ? `в эфире · ${ago} с назад` : ago < 600 ? `в эфире · ${Math.round(ago / 60)} мин назад` : 'сессия молчит'
+  }
+  setInterval(showLink, 1000)
+
+  ;(async () => {
+    const db = window.claude && window.claude.use ? await window.claude.use('db') : null
+    if (!db) { $('linkText').textContent = 'демо: данные сессии недоступны'; return }
+    db.doc('live/state').onSnapshot(snap => {
+      if (!snap.exists) return
+      const s = snap.data()
+      if (!s || typeof s !== 'object') return
+      isLive = true
+      clearInterval(demoTimer)
+      updatedAt = Number(s.updatedAt) || Date.now()
+      render(s)
+      showLink()
+    }, () => { $('linkText').textContent = 'связь с сессией потеряна: перезагрузите страницу' })
+  })()
+})()
+</script>

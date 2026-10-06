@@ -157,6 +157,37 @@ describe('in the chat, where the phone sees her', () => {
     expect(ran.text).toContain('(4:')
   })
 
+  test('the Live page gets the whole state after each change', async ($, on) => {
+    const clock = mock.clock(on, { now: 6_000_000 })
+    on('ui.status', () => ({ value: undefined }))
+    on('fs.write', () => ({ value: undefined }))
+    const writes: Array<Record<string, unknown>> = []
+    on('tool.call', ($, e) => {
+      if (String(e.tool) === 'ArtifactData') {
+        writes.push(e as unknown as Record<string, unknown>)
+        return { result: 'ok', text: `Database set committed: "live"/"state". The document is now at version ${writes.length}.` } as never
+      }
+      return { result: 'hello' } as never
+    })
+
+    const ran = await $.command.run({
+      command: 'claude-chan',
+      args: 'live https://claude.ai/artifact/TEST123',
+      origin: { kind: 'composer' },
+      presentation: { isFullscreen: false, columns: 40 },
+    })
+    expect(ran.text).toContain('TEST123')
+    await clock.advance(800)
+    expect(writes).toHaveLength(1)
+
+    await $.tool.call({ tool: 'Read', file_path: '/repo/app.ts' } as never)
+    await clock.advance(800)
+    expect(writes).toHaveLength(2)
+    // Pinned to the version the first write left, and her mood is the call's.
+    expect(writes[1]).toMatchObject({ action: 'set', collection: 'live', doc_id: 'state', if_version: 1 })
+    expect((writes[1]?.['data'] as { mood?: string }).mood).toBe('read')
+  })
+
   test('every tool row gets her line above it', async ($, on) => {
     on('ui.render', { component: 'ToolUse' }, () => ({ type: 'Text', props: {}, children: ['Read(app.ts)'] }))
 

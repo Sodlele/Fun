@@ -7,6 +7,8 @@ import type { Lang } from './lines'
 import { rasterCells, scene, svgScene } from './sprite'
 
 const PANE = 'claude-chan'
+const LIVE_FILE = 'live-url.txt' // the Claude-chan Live page this session feeds
+const LIVE_DEBOUNCE_MS = 700
 const RASTER = 'stage'
 const SCENE_ROWS = 19 // 38 pixels: two per terminal row
 const SVG_W = 56
@@ -91,6 +93,11 @@ const live = {
   isTicking: false,
   drawnOn: new Set<string>(), // the surfaces that drew the pane since the load
   turnKinds: {} as Partial<Record<Mood, number>>, // this turn's calls by mood
+  liveUrl: '', // the Claude-chan Live artifact, '' when none
+  liveVersion: 0, // its state document's version, as the last write left it
+  isPushing: false,
+  pushAgain: false,
+  pushTimer: null as { cancel: () => void } | null,
 }
 
 function text(key: string): string {
@@ -140,6 +147,7 @@ async function stageTo($: EngineInterface, next: Mood, about = ''): Promise<void
   const stage: Stage = { mood: next, since: now, line: lineFor(live.lang, next, about, Math.floor(now / 997)), detail: about }
   await update($, stageAtom, () => stage)
   $.ui.status(statusLine())
+  schedulePush($)
 }
 
 /** Bookkeeping that must never break what it watches (the model's stream). */
@@ -153,10 +161,113 @@ async function quietly(work: Promise<unknown>): Promise<void> {
 
 async function addLog($: EngineInterface, entry: LogEntry): Promise<void> {
   await update($, logAtom, list => [...list, entry].slice(-LOG_MAX))
+  schedulePush($)
 }
 
 async function settleLog($: EngineInterface, id: string, status: LogEntry['status']): Promise<void> {
   await update($, logAtom, list => list.map(one => (one.id === id ? { ...one, status } : one)))
+  schedulePush($)
+}
+
+// ---- Claude-chan Live: the artifact page every Claude app can show -------
+// The page draws her from one database document; the mod keeps it current
+// through the ArtifactData tool, at most one write in flight.
+
+function schedulePush($: EngineInterface): void {
+  if (live.liveUrl === '' || live.pushTimer !== null) return
+  live.pushTimer = $.clock.after(LIVE_DEBOUNCE_MS, () => void pushLive($))
+}
+
+/** The version a write left, or the current one a refused write names. */
+function versionIn(words: string | undefined): number | undefined {
+  const match = /version["\s:]+(\d+)/i.exec(words ?? '')
+  return match ? Number(match[1]) : undefined
+}
+
+async function liveWrite($: EngineInterface, data: Record<string, unknown>, version: number): Promise<{ ok: boolean; version?: number }> {
+  const ran = await $.tool.call({
+    tool: 'ArtifactData',
+    action: 'set',
+    url: live.liveUrl,
+    collection: 'live',
+    doc_id: 'state',
+    data,
+    ...(version > 0 ? { if_version: version } : {}),
+  })
+  const words = ran.deny ?? ran.text ?? ''
+  return { ok: ran.deny === undefined && ran.isError !== true && /committed/i.test(words), version: versionIn(words) }
+}
+
+async function pushLive($: EngineInterface): Promise<void> {
+  live.pushTimer = null
+  if (live.liveUrl === '') return
+  if (live.isPushing) {
+    live.pushAgain = true
+    return
+  }
+  live.isPushing = true
+  try {
+    const data = await liveDoc($)
+    let wrote = await liveWrite($, data, live.liveVersion)
+    if (!wrote.ok) {
+      // A stale or unknown version: take the one the refusal named, or read it.
+      let current = wrote.version
+      if (current === undefined) {
+        const got = await $.tool.call({ tool: 'ArtifactData', action: 'get', url: live.liveUrl, collection: 'live', doc_id: 'state' })
+        current = versionIn(got.text) ?? 0
+      }
+      wrote = await liveWrite($, data, current)
+    }
+    if (wrote.ok && wrote.version !== undefined) live.liveVersion = wrote.version
+  } catch {
+    // The page misses one update; the next change sends the whole state again.
+  } finally {
+    live.isPushing = false
+    if (live.pushAgain) {
+      live.pushAgain = false
+      schedulePush($)
+    }
+  }
+}
+
+async function liveDoc($: EngineInterface): Promise<Record<string, unknown>> {
+  const stage = await read($, stageAtom)
+  const stats = await read($, statsAtom)
+  const log = await read($, logAtom)
+  return {
+    v: 1,
+    mood: stage.mood,
+    line: stage.line,
+    detail: stage.detail,
+    combo: stats.combo,
+    bestCombo: stats.bestCombo,
+    turns: stats.turns,
+    tools: stats.tools,
+    tokens: stats.tokens,
+    thought: stats.thought,
+    reads: stats.reads,
+    edits: stats.edits,
+    shells: stats.shells,
+    searches: stats.searches,
+    agents: stats.agents,
+    errors: stats.errors,
+    isTurnRunning: live.isTurnRunning,
+    updatedAt: await $.clock.now(),
+    log: log.slice(-14).map(({ id, mood, text: words, status, isAgent }) => ({ id, mood, text: words, status, isAgent })),
+  }
+}
+
+async function loadLiveUrl($: EngineInterface, fromOptions: string): Promise<void> {
+  let url = fromOptions.trim()
+  if (url === '') {
+    try {
+      url = (await $.fs.read(`${$.plugin.root}/${LIVE_FILE}`)).trim()
+    } catch {
+      url = ''
+    }
+  }
+  live.liveUrl = /^https:\/\/claude\.ai\/(code\/)?artifact\/[A-Za-z0-9-]+$/.test(url) ? url : ''
+  live.liveVersion = 0
 }
 
 /** Once a second: passing moods fade, and a long quiet puts her to sleep. */
@@ -203,7 +314,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'claude-chan',
       description: live.lang === 'ru' ? 'Позвать Claude-chan в чат и в панель (close: спрятать панель)' : 'Call Claude-chan into the chat and the pane (close: hide the pane)',
-      argumentHint: '[close|test]',
+      argumentHint: '[live <url>|live off|close|test]',
       immediate: true,
     })
 
@@ -217,6 +328,8 @@ export const register: Register = (on, options) => {
     else $.ui.status(statusLine())
 
     $.clock.every(FRAME_MS, () => void tick($))
+    await loadLiveUrl($, typeof options['liveUrl'] === 'string' ? options['liveUrl'] : '')
+    schedulePush($)
 
     const isAway = await read($, dismissedAtom)
     if (options['autoOpen'] !== false && !isAway && !(await isPaneOpen($))) void openPane($)
@@ -231,6 +344,19 @@ export const register: Register = (on, options) => {
     if (ask === 'close') {
       await $.ui.close({ id: PANE })
       return { text: text('hidden') }
+    }
+    if (ask === 'live' || ask.startsWith('live ')) {
+      const target = ask.slice(4).trim()
+      if (target === 'off') {
+        await $.fs.write(`${$.plugin.root}/${LIVE_FILE}`, '')
+        live.liveUrl = ''
+        return { text: text('liveOff') }
+      }
+      if (target !== '') await $.fs.write(`${$.plugin.root}/${LIVE_FILE}`, target)
+      await loadLiveUrl($, target)
+      if (live.liveUrl === '') return { text: text('liveNone') }
+      schedulePush($)
+      return { text: `${text('liveOn')} ${live.liveUrl}` }
     }
     if (ask === 'test') {
       // One line down each channel a mod has, to learn which a client shows.
@@ -314,6 +440,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
+    if (tool === 'ArtifactData' && (e as unknown as { url?: unknown }).url === live.liveUrl) return next(e)
     const { mood: kind, detail: about } = classify(tool, e as unknown as Readonly<Record<string, unknown>>)
     const isAgent = e.agentId !== undefined
     const id = e.tool_use_id
