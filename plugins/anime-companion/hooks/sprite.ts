@@ -777,10 +777,18 @@ export function svgScene({ w, h, mood, combo }: SvgInput): string {
     '.s{animation:tw ease-in-out infinite}',
     '.r{transform-origin:' + (actorX(w) + SPRITE_W / 2) + 'px ' + Math.round(h * 0.35) + 'px;animation:spin 14s linear infinite}',
     '.g{animation:rain linear infinite}',
+    '@keyframes zip{from{transform:translate(-24px,0)}to{transform:translate(' + (w + 24) + 'px,0)}}',
+    '.z{animation:zip linear infinite}',
+    '@keyframes ping{from{transform:scale(.06);opacity:.95}to{transform:scale(1);opacity:0}}',
+    '.o{transform-box:fill-box;transform-origin:center;animation:ping 1.8s ease-out infinite}',
+    '@keyframes rise{from{transform:translate(0,4px);opacity:0}30%{opacity:1}to{transform:translate(2px,-' + h + 'px);opacity:0}}',
+    '.m{animation:rise linear infinite}',
+    '@keyframes red{0%,100%{opacity:0}50%{opacity:.28}}',
+    '.x{animation:red .18s linear infinite}',
   ]
-  let back = `<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hex(top)}"/><stop offset=".6" stop-color="${hex(mid)}"/><stop offset="1" stop-color="${hex(low)}"/></linearGradient>` +
-    `<linearGradient id="trail" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6dffa0" stop-opacity="0"/><stop offset="1" stop-color="#6dffa0"/></linearGradient></defs>` +
-    `<rect width="${w}" height="${h}" fill="url(#sky)"/>`
+  let back = `<defs><linearGradient id="sky-${mood}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${hex(top)}"/><stop offset=".6" stop-color="${hex(mid)}"/><stop offset="1" stop-color="${hex(low)}"/></linearGradient>` +
+    `<linearGradient id="trail-${mood}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6dffa0" stop-opacity="0"/><stop offset="1" stop-color="#6dffa0"/></linearGradient></defs>` +
+    `<rect width="${w}" height="${h}" fill="url(#sky-${mood})"/>`
 
   if (mood === 'done' || mood === 'agent') {
     const cx = actorX(w) + SPRITE_W / 2
@@ -802,12 +810,32 @@ export function svgScene({ w, h, mood, combo }: SvgInput): string {
       back += `<rect class="s s${i}" x="${x}" y="${y}" width="1" height="1" fill="#ffffff"/>`
     }
   }
+  if (mood === 'edit') {
+    // Speed lines streaking across: she is on a roll.
+    for (let i = 0; i < Math.min(14, 5 + combo); i++) {
+      const y = Math.floor(rnd(i * 31) * h)
+      css.push(`.z${i}{animation-duration:${(0.5 + rnd(i * 17) * 0.7).toFixed(2)}s;animation-delay:-${rnd(i * 13).toFixed(2)}s}`)
+      back += `<rect class="z z${i}" x="0" y="${y}" width="${6 + Math.floor(rnd(i * 17) * 14)}" height="1" fill="#ffffff" fill-opacity=".5"/>`
+    }
+  }
+  if (mood === 'search') {
+    // A sonar ring sweeping out from where the lens points.
+    back += `<ellipse class="o" cx="${Math.round(w * 0.72)}" cy="${Math.round(h * 0.35)}" rx="${w}" ry="${Math.round(w * 0.6)}" fill="none" stroke="#a6f0ea" stroke-width=".6"/>`
+    back += `<ellipse class="o" style="animation-delay:-.9s" cx="${Math.round(w * 0.72)}" cy="${Math.round(h * 0.35)}" rx="${w}" ry="${Math.round(w * 0.6)}" fill="none" stroke="#a6f0ea" stroke-width=".6"/>`
+  }
+  if (mood === 'read' || mood === 'plan') {
+    // Warm dust motes floating up.
+    for (let i = 0; i < 14; i++) {
+      css.push(`.m${i}{animation-duration:${(4 + rnd(i) * 4).toFixed(2)}s;animation-delay:-${(rnd(i * 7) * 8).toFixed(2)}s}`)
+      back += `<rect class="m m${i}" x="${Math.floor(rnd(i * 5) * w)}" y="${h - 2}" width="1" height="1" fill="${hex(mix(low, 0xffffff, 0.5))}"/>`
+    }
+  }
   if (mood === 'sleep') back += `<circle cx="${w - 7}" cy="5" r="4" fill="#fff4c8"/><circle cx="${w - 9}" cy="6" r="3.2" fill="${hex(top)}"/>`
   if (mood === 'bash') {
     for (let col = 0; col < w; col += 2) {
       const len = 4 + Math.floor(rnd(col + 99) * 8)
       css.push(`.g${col}{animation-duration:${(1.5 + rnd(col) * 2.5).toFixed(2)}s;animation-delay:-${(rnd(col + 7) * 4).toFixed(2)}s}`)
-      back += `<rect class="g g${col}" x="${col}" y="0" width="1" height="${len}" fill="url(#trail)"/>`
+      back += `<rect class="g g${col}" x="${col}" y="0" width="1" height="${len}" fill="url(#trail-${mood})"/>`
     }
   }
   if (mood !== 'bash' && mood !== 'error') {
@@ -818,11 +846,13 @@ export function svgScene({ w, h, mood, combo }: SvgInput): string {
     }
   }
 
+  // The error flash rides on top of everything, as the terminal's does.
+  const flash = mood === 'error' ? `<rect class="x" width="${w}" height="${h}" fill="#ff2030"/>` : ''
   let front = ''
   for (let f = 0; f < frames; f++) {
     const t = (f * periodMs) / frames
     css.push(`.f${f}{animation-delay:${-((frames - f) % frames) * (periodMs / frames)}ms}`)
     front += `<g class="f f${f}">${paths(actorLayer({ w, h, mood, t, combo }), w, h)}</g>`
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges"><style>${css.join('')}</style>${back}${front}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges"><style>${css.join('')}</style>${back}${front}${flash}</svg>`
 }

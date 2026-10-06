@@ -106,6 +106,34 @@ describe('the pane', () => {
   })
 })
 
+describe('in the terminal', () => {
+  test('she moves: every frame repaints the mounted Raster in place', async ($, on) => {
+    const clock = mock.clock(on, { now: 7_000_000 })
+    on('ui.status', () => ({ value: undefined }))
+    on('command.register', () => ({ value: { command: 'claude-chan' } }))
+    on('ui.panes', () => ({ value: [] }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('fs.read', () => ({ deny: 'no live page here' }))
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    const blits: Array<{ key: string; columns?: number; rows?: number; cells: string }> = []
+    on('ui.blit', ($, e) => {
+      if ('cells' in e) blits.push({ key: e.key, columns: e.columns, rows: e.rows, cells: e.cells })
+      return { value: {} }
+    })
+
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: PLUGIN, surface: 'terminal', component: 'Pane', requestId: 'claude-chan', props: paneProps(50) })
+    await clock.advance(1000)
+
+    // About eight frames a second, each the mounted size, and not all alike.
+    expect(blits.length >= 6, `${blits.length} frames in a second`).toBe(true)
+    expect(blits[0]).toMatchObject({ key: 'stage', columns: 50, rows: 19 })
+    expect(blits[0]?.cells).toHaveLength((50 * 19 * 12 * 4) / 3)
+    expect(new Set(blits.map(one => one.cells)).size > 1).toBe(true)
+    await ui.unmount()
+  })
+})
+
 describe('in the chat, where the phone sees her', () => {
   test('/claude-chan draws the live scene in its row and reports the clients', async ($, on) => {
     mock.clock(on, { now: 5_000_000 })

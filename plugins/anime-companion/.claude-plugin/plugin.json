@@ -1,6 +1,6 @@
 {
   "name": "anime-companion",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Claude-chan, an animated anime companion pane that acts out everything Claude does (thinking, reading, editing, shell, agents) with a visual-novel log and combo HUD",
   "types": "./types/index.d.ts",
   "userConfig": {
