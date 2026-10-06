@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, RenderElement, UiOpenResult } from 'claude-code'
 
 import type { LogEntry, Mood, Stage, Stats } from '../types'
-import { classify, ICONS, lineFor, UI } from './lines'
+import { classify, count, ICONS, lineFor, UI } from './lines'
 import type { Lang } from './lines'
 import { rasterCells, scene, svgScene } from './sprite'
 
@@ -90,6 +90,7 @@ const live = {
   clock: 0,
   isTicking: false,
   drawnOn: new Set<string>(), // the surfaces that drew the pane since the load
+  turnKinds: {} as Partial<Record<Mood, number>>, // this turn's calls by mood
 }
 
 function text(key: string): string {
@@ -202,7 +203,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'claude-chan',
       description: live.lang === 'ru' ? 'Позвать Claude-chan в чат и в панель (close: спрятать панель)' : 'Call Claude-chan into the chat and the pane (close: hide the pane)',
-      argumentHint: '[close]',
+      argumentHint: '[close|test]',
       immediate: true,
     })
 
@@ -226,9 +227,25 @@ export const register: Register = (on, options) => {
   // `/claude-chan` draws her live in the chat (every client draws that row,
   // the phone included) and opens the pane where the client seats panes.
   on('command.run', { command: 'claude-chan' }, async ($, e) => {
-    if (e.args.trim() === 'close') {
+    const ask = e.args.trim()
+    if (ask === 'close') {
       await $.ui.close({ id: PANE })
       return { text: text('hidden') }
+    }
+    if (ask === 'test') {
+      // One line down each channel a mod has, to learn which a client shows.
+      const face = FACES[live.mood]
+      $.ui.log(`${face} ${text('probe')} 1: ui.log`)
+      $.ui.toast(`${face} ${text('probe')} 2: toast`)
+      $.ui.status(`${face} ${text('probe')} 3: status`)
+      let refused = ''
+      try {
+        const notice = await $.session.append({ message: { type: 'system', content: [{ type: 'text', text: `${face} ${text('probe')} 4: notice` }] } })
+        if (notice.deny !== undefined) refused = ` (4: ${notice.deny})`
+      } catch (error) {
+        refused = ` (4: ${error instanceof Error ? error.message : String(error)})`
+      }
+      return { text: `${face} ${text('probe')} 5: ${text('probeAsk')}${refused}` }
     }
     await update($, dismissedAtom, () => false)
     const opened = await openPane($)
@@ -239,7 +256,8 @@ export const register: Register = (on, options) => {
       `${text('pane')}: ${opened.isPlaced ? text('placed') : `${text('waiting')} (${opened.reason})`}`,
       `${text('drawnOn')}: ${live.drawnOn.size > 0 ? [...live.drawnOn].join(', ') : text('nowhere')}`,
     ].join(' · ')
-    return { text: `✿ ${text('here')} #${seq}\n\n${report}` }
+    const card = textCard(await read($, stageAtom), await read($, statsAtom), await read($, logAtom))
+    return { text: `✿ ${text('here')} #${seq}\n\n${card}\n\n${report}` }
   })
 
   on('ui.close', async ($, e, next) => {
@@ -253,6 +271,7 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     const now = await $.clock.now()
     live.combo = 0
+    live.turnKinds = {}
     live.isTurnRunning = true
     await update($, statsAtom, stats => ({ ...stats, turns: stats.turns + 1, combo: 0, turnStartedAt: now }))
     if (e.text.trim() !== '') {
@@ -301,6 +320,7 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
 
     live.combo += 1
+    if (!isAgent) live.turnKinds[kind] = (live.turnKinds[kind] ?? 0) + 1
     const streak = live.combo
     await addLog($, { id, mood: kind, text: about ? `${tool} · ${about}` : tool, status: 'run', at: now, isAgent })
     await update($, statsAtom, stats => ({
@@ -343,10 +363,14 @@ export const register: Register = (on, options) => {
     await update($, statsAtom, stats => ({ ...stats, tokens: stats.tokens + tokens }))
 
     const verdict: Mood = e.reason === 'answer' ? 'done' : e.reason === 'aborted' ? 'idle' : 'error'
-    const summary = `${text('turnDone')}: ${seconds}s · ${live.combo} ${text('tools')}`
+    const summary = `${text('turnDone')}: ${seconds}s · ${count(live.lang, live.combo, 'tools')}`
     await addLog($, { id: `done-${e.turnId}`, mood: verdict, text: summary, status: verdict === 'error' ? 'err' : 'ok', at: now, isAgent: false })
     await stageTo($, verdict, `${seconds}s`)
-    return ran
+    if (options['turnCard'] === false) return ran
+    // Shown beneath the answer: the one line that reaches every client.
+    const stage = await read($, stageAtom)
+    const stats = await read($, statsAtom)
+    return { ...ran, text: turnCard(stage, stats, seconds) }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -392,7 +416,7 @@ export const register: Register = (on, options) => {
       e.surface === 'terminal'
         ? rasterArt(($.ui.resolve(e) as Elements['terminal']).Raster, `inline-${seq}`, columns, stage, stats)
         : svgArt(($.ui.resolve(e) as Elements['desktop']).Svg, columns, stage, stats)
-    const report = e.props.text.split('\n\n')[1] ?? ''
+    const report = e.props.text.split('\n\n').pop() ?? ''
 
     return (
       <Box flexDirection="column">
@@ -426,6 +450,33 @@ export const register: Register = (on, options) => {
 }
 
 type TextTag = Elements['terminal']['Text']
+
+/** Her line under an answer: the face, what she says, and what the turn did. */
+function turnCard(stage: Stage, stats: Stats, seconds: number): string {
+  const { lv, progress } = level(stats.tools)
+  const kinds = (Object.entries(live.turnKinds) as [Mood, number][]).map(([mood, n]) => `${ICONS[mood]} ${n}`).join('  ')
+  const did = live.combo > 0 ? ` · ⚡ ${live.combo} ${text('combo')}${kinds ? ` (${kinds})` : ''}` : ''
+  return `${FACES[stage.mood]} Claude-chan: «${stage.line}» · ${seconds}s${did} · ${text('lv')} ${lv} ${bar(progress, 6)}`
+}
+
+/** Claude-chan as plain text: what reaches a client that draws no mod trees. */
+function textCard(stage: Stage, stats: Stats, log: readonly LogEntry[]): string {
+  const { lv, progress } = level(stats.tools)
+  const lines = [
+    `${text('name')} ${FACES[stage.mood]}`,
+    `「${stage.line}」`,
+    `⚡ ${stats.combo} ${text('combo')} · ${text('best')} ${stats.bestCombo} · ${text('lv')} ${lv} ${bar(progress, 8)}`,
+    `📖 ${stats.reads}  ✨ ${stats.edits}  ⌨ ${stats.shells}  🔍 ${stats.searches}  👯 ${stats.agents}  💥 ${stats.errors}  💭 ${compact(stats.thought)}`,
+    `${text('log')}:`,
+    ...(log.length === 0
+      ? [text('empty')]
+      : log.slice(-8).map(entry => {
+          const mark = entry.status === 'run' ? '…' : entry.status === 'err' ? '✗' : '✓'
+          return `${entry.isAgent ? '  ↳ ' : ''}${mark} ${ICONS[entry.mood]} ${clip(entry.text, 60)}`
+        })),
+  ]
+  return lines.join('\n')
+}
 type Tags = { Box: Elements['terminal']['Box']; Text: TextTag }
 
 function rasterArt(Raster: Elements['terminal']['Raster'], key: string, columns: number, stage: Stage, stats: Stats): RenderElement {
@@ -478,7 +529,7 @@ function stageTree({ Box, Text }: Tags, art: RenderElement, stage: Stage, stats:
         </Text>
         <Text wrap="truncate-end">
           <Text color="#d97757">{`${text('lv')} ${lv} ${bar(progress, 8)}`}</Text>
-          <Text dimColor>{`  ${stats.turns} ${text('turns')} · ${stats.tools} ${text('tools')} · ${compact(stats.tokens)} tok`}</Text>
+          <Text dimColor>{`  ${count(live.lang, stats.turns, 'turns')} · ${count(live.lang, stats.tools, 'tools')} · ${compact(stats.tokens)} tok`}</Text>
         </Text>
         <Text dimColor wrap="truncate-end">
           {counters}

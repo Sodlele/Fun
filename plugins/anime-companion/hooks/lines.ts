@@ -63,6 +63,8 @@ export const UI: Record<Lang, Record<string, string>> = {
     nowhere: 'нигде',
     here: 'Claude-chan в чате',
     stickers: 'реплики над инструментами',
+    probe: 'Проверка канала',
+    probeAsk: 'это текст команды. Какие из строк 1–5 ты видишь?',
   },
   en: {
     name: '✿ Claude-chan',
@@ -89,6 +91,8 @@ export const UI: Record<Lang, Record<string, string>> = {
     nowhere: 'nowhere',
     here: 'Claude-chan in the chat',
     stickers: 'lines above tool calls',
+    probe: 'Channel check',
+    probeAsk: "this is the command's text. Which of lines 1–5 can you see?",
   },
 }
 
@@ -106,6 +110,21 @@ export const ICONS: Record<Mood, string> = {
   ask: '❓',
   error: '💥',
   done: '🏆',
+}
+
+const NOUNS: Record<Lang, Record<'tools' | 'turns', readonly [string, string, string]>> = {
+  ru: { tools: ['действие', 'действия', 'действий'], turns: ['ход', 'хода', 'ходов'] },
+  en: { tools: ['action', 'actions', 'actions'], turns: ['turn', 'turns', 'turns'] },
+}
+
+/** `n` and its noun in the right form: 1 действие, 2 действия, 5 действий. */
+export function count(lang: Lang, n: number, noun: 'tools' | 'turns'): string {
+  const [one, few, many] = NOUNS[lang][noun]
+  if (lang === 'en') return `${n} ${n === 1 ? one : many}`
+  const tens = n % 100
+  const ones = n % 10
+  const form = tens >= 11 && tens <= 14 ? many : ones === 1 ? one : ones >= 2 && ones <= 4 ? few : many
+  return `${n} ${form}`
 }
 
 /** A short, stable pick: the same seed says the same line. */
